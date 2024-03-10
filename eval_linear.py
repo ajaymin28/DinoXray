@@ -15,7 +15,7 @@ import os
 import argparse
 import json
 from pathlib import Path
-
+import sys
 import torch
 from torch import nn
 import torch.distributed as dist
@@ -23,7 +23,7 @@ import torch.backends.cudnn as cudnn
 from torchvision import datasets
 from torchvision import transforms as pth_transforms
 from torchvision import models as torchvision_models
-
+from myutils.Helpers import ChestXRayDataloader
 import utils
 import vision_transformer as vits
 
@@ -59,6 +59,12 @@ def eval_linear(args):
 
     linear_classifier = LinearClassifier(embed_dim, num_labels=args.num_labels)
     linear_classifier = linear_classifier.cuda()
+
+    if args.linear_pretrained_weights!="":
+        state_dict = torch.load(args.linear_pretrained_weights, map_location="cpu")
+        linear_classifier.load_state_dict(state_dict, strict=False)
+        print(f"Loaded Linear classifier weights: {args.linear_pretrained_weights}")
+
     linear_classifier = nn.parallel.DistributedDataParallel(linear_classifier, device_ids=[args.gpu])
 
     # ============ preparing data ... ============
@@ -68,7 +74,14 @@ def eval_linear(args):
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
+    
+    
+    # dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
+    
+    DatasetPath = args.data_path # "./train"
+    dataset_val = ChestXRayDataloader(rootPath=f"{DatasetPath}/val",
+                                   labels={ "NORMAL": 0 , "PNEUMONIA": 1},
+                                   img_preprocessing_fn=val_transform)
     val_loader = torch.utils.data.DataLoader(
         dataset_val,
         batch_size=args.batch_size_per_gpu,
@@ -88,7 +101,11 @@ def eval_linear(args):
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, "train"), transform=train_transform)
+    # dataset_train = datasets.ImageFolder(os.path.join(args.data_path, "train"), transform=train_transform)
+    dataset_train = ChestXRayDataloader(rootPath=f"{DatasetPath}/train",
+                                   labels={ "NORMAL": 0 , "PNEUMONIA": 1},
+                                   img_preprocessing_fn=train_transform)
+
     sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
     train_loader = torch.utils.data.DataLoader(
         dataset_train,
@@ -259,23 +276,24 @@ if __name__ == '__main__':
         help="""Whether ot not to concatenate the global average pooled features to the [CLS] token.
         We typically set this to False for ViT-Small and to True with ViT-Base.""")
     parser.add_argument('--arch', default='vit_small', type=str, help='Architecture')
-    parser.add_argument('--patch_size', default=16, type=int, help='Patch resolution of the model.')
-    parser.add_argument('--pretrained_weights', default='', type=str, help="Path to pretrained weights to evaluate.")
+    parser.add_argument('--patch_size', default=8, type=int, help='Patch resolution of the model.')
+    parser.add_argument('--pretrained_weights', default='./out/checkpoint.pth', type=str, help="Path to pretrained weights to evaluate.")
+    parser.add_argument('--linear_pretrained_weights', default='./pretrains/dino_deitsmall8_linearweights.pth', type=str, help="Path to pretrained weights to evaluate.")
     parser.add_argument("--checkpoint_key", default="teacher", type=str, help='Key to use in the checkpoint (example: "teacher")')
     parser.add_argument('--epochs', default=100, type=int, help='Number of epochs of training.')
     parser.add_argument("--lr", default=0.001, type=float, help="""Learning rate at the beginning of
         training (highest LR used during training). The learning rate is linearly scaled
         with the batch size, and specified here for a reference batch size of 256.
         We recommend tweaking the LR depending on the checkpoint evaluated.""")
-    parser.add_argument('--batch_size_per_gpu', default=128, type=int, help='Per-GPU batch-size')
+    parser.add_argument('--batch_size_per_gpu', default=16, type=int, help='Per-GPU batch-size')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
-    parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
-    parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
+    parser.add_argument('--data_path', default='./chest_xray', type=str)
+    parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument('--val_freq', default=1, type=int, help="Epoch frequency for validation.")
-    parser.add_argument('--output_dir', default=".", help='Path to save logs and checkpoints')
-    parser.add_argument('--num_labels', default=1000, type=int, help='Number of labels for linear classifier')
+    parser.add_argument('--output_dir', default="./outlinear", help='Path to save logs and checkpoints')
+    parser.add_argument('--num_labels', default=2, type=int, help='Number of labels for linear classifier')
     parser.add_argument('--evaluate', dest='evaluate', action='store_true', help='evaluate model on validation set')
     args = parser.parse_args()
     eval_linear(args)

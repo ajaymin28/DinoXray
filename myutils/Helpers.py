@@ -41,7 +41,7 @@ class ChestXRayDataloader(data.Dataset):
             print(f"{label} Images found: {len(images_list)}")
 
             for imagePath in images_list:
-                self.labels.append(label)
+                self.labels.append(labelInt)
                 self.images.append(imagePath)
 
 
