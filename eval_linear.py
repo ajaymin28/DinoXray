@@ -79,7 +79,7 @@ def eval_linear(args):
     # dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
     
     DatasetPath = args.data_path # "./train"
-    dataset_val = ChestXRayDataloader(rootPath=f"{DatasetPath}/val",
+    dataset_val = ChestXRayDataloader(rootPath=f"{DatasetPath}/test",
                                    labels={ "NORMAL": 0 , "PNEUMONIA": 1},
                                    img_preprocessing_fn=val_transform)
     val_loader = torch.utils.data.DataLoader(
