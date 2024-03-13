@@ -89,8 +89,26 @@ def eval_linear(args):
         pin_memory=True,
     )
 
+    # set optimizer
+    optimizer = torch.optim.SGD(
+        linear_classifier.parameters(),
+        args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256., # linear scaling rule
+        momentum=0.9,
+        weight_decay=0, # we do not apply weight decay
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=0)
+
     if args.evaluate:
-        utils.load_pretrained_linear_weights(linear_classifier, args.arch, args.patch_size)
+        # Optionally resume from a checkpoint
+        to_restore = {"epoch": 0, "best_acc": 0.}
+        utils.restart_from_checkpoint(
+            args.linear_pretrained_weights,
+            run_variables=to_restore,
+            state_dict=linear_classifier,
+            optimizer=optimizer,
+            scheduler=scheduler,
+        )
+        # utils.load_pretrained_linear_weights(linear_classifier, args.arch, args.patch_size, pretrained_weights=args.linear_pretrained_weights)
         test_stats = validate_network(val_loader, model, linear_classifier, args.n_last_blocks, args.avgpool_patchtokens)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
@@ -115,15 +133,6 @@ def eval_linear(args):
         pin_memory=True,
     )
     print(f"Data loaded with {len(dataset_train)} train and {len(dataset_val)} val imgs.")
-
-    # set optimizer
-    optimizer = torch.optim.SGD(
-        linear_classifier.parameters(),
-        args.lr * (args.batch_size_per_gpu * utils.get_world_size()) / 256., # linear scaling rule
-        momentum=0.9,
-        weight_decay=0, # we do not apply weight decay
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs, eta_min=0)
 
     # Optionally resume from a checkpoint
     to_restore = {"epoch": 0, "best_acc": 0.}
