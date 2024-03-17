@@ -26,7 +26,7 @@ from torchvision import models as torchvision_models
 from myutils.Helpers import ChestXRayDataloader
 import utils
 import vision_transformer as vits
-
+from sklearn.metrics import classification_report, confusion_matrix
 
 def eval_linear(args):
     utils.init_distributed_mode(args)
@@ -75,7 +75,7 @@ def eval_linear(args):
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
     
-    
+
     # dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
     
     DatasetPath = args.data_path # "./train"
@@ -223,8 +223,29 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool):
     linear_classifier.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
+    all_targets = None
+    all_preds = None
+    incorrect_examples = {
+        "targets": [],
+        "preds": [],
+        "images": []
+    }
+
+    mean = torch.tensor([0.485, 0.456, 0.406])
+    std = torch.tensor([0.229, 0.224, 0.225])
+
+    # Reverse the normalization
+    inv_transform = pth_transforms.Compose([
+        pth_transforms.Normalize(mean=-mean/std, std=1/std),
+    ])
+
+    
+
+    toPil = pth_transforms.ToPILImage()
+
     for inp, target in metric_logger.log_every(val_loader, 20, header):
         # move to gpu
+
         inp = inp.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
@@ -241,6 +262,29 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool):
         output = linear_classifier(output)
         loss = nn.CrossEntropyLoss()(output, target)
 
+        _, pred = output.topk(1)
+        pred = pred.t().flatten()
+        if all_preds is None: 
+            all_preds = pred
+        else: 
+            all_preds = torch.cat((all_preds, pred))
+        idxs_mask = (pred != target).view(-1)
+        inputImages = inp[idxs_mask]
+        incorrectPreds = pred[idxs_mask]
+        incorrectPredstarget= target[idxs_mask]
+
+        if inputImages.size(0)>0:
+            for img_idx in range(inputImages.size(0)):
+                image = inputImages[img_idx]
+                image = inv_transform(image)
+                PilImages = toPil(image)
+                incorrect_examples["images"].append(PilImages) 
+                incorrect_examples["preds"].append(incorrectPreds[img_idx].cpu().numpy().flatten())
+                incorrect_examples["targets"].append(incorrectPredstarget[img_idx].cpu().numpy().flatten())
+        if all_targets is None: 
+            all_targets = target
+        else: 
+            all_targets = torch.cat((all_targets, target))
         if linear_classifier.module.num_labels >= 5:
             acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
         else:
@@ -251,6 +295,32 @@ def validate_network(val_loader, model, linear_classifier, n, avgpool):
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         if linear_classifier.module.num_labels >= 5:
             metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+    
+    all_targets = all_targets.cpu().numpy()
+    all_preds = all_preds.cpu().numpy()
+    target_names = ["NORMAL", "PNEUMONIA"]
+    # print(f"all_preds : {all_preds.shape}, all targets: {all_targets.shape}")
+    cr = classification_report(all_targets, all_preds, target_names=target_names, output_dict=False)
+    print(cr)
+    cm = confusion_matrix(all_targets, all_preds).ravel()
+    # print(tn, fp, fn, tp )
+    # cr = classification_report(all_targets, all_preds, target_names=target_names, output_dict=True)
+
+    OUT_DIR = "output/incorrect_preds/"
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+    torch.save(incorrect_examples, f"{OUT_DIR}/inocrect_examples.pth")
+    torch.save(cm, f"{OUT_DIR}/confiusion_metrics.pth")
+    torch.save(cr, f"{OUT_DIR}/classification_report.pth")
+
+    inocrect_examples = torch.load("./inocrect_examples.pth")
+    target_names = ["NORMAL", "PNEUMONIA"]
+    for idx, data in enumerate(inocrect_examples["images"]):
+        image = inocrect_examples["images"][idx]
+        pred = list(inocrect_examples["preds"][idx])[0]
+        target = list(inocrect_examples["targets"][idx])[0]
+        image.save(f"{OUT_DIR}/{idx}_Target_{target_names[target]}_Pred_{target_names[pred]}.png")
+
     if linear_classifier.module.num_labels >= 5:
         print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
