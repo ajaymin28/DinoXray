@@ -7,6 +7,8 @@
 </div>
 
 
+## Kaggle notebook with training logs can be found [here](https://www.kaggle.com/code/ajaymin28/dinoxray-test-acc-95-5/)
+
 ## Training Dino backbone from scratch
 ```
 python -m torch.distributed.launch --use_env --nproc_per_node=1 /kaggle/working/DinoXray/main_dino.py --data_path="../input/chest-xray-pneumonia/chest_xray" --output_dir="/kaggle/working/" --epochs=50 --patch_size=8 --num_workers=4 --batch_size_per_gpu=8
